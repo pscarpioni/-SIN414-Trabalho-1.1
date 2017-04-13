@@ -17,13 +17,13 @@ $ sudo apt-get install openssl
 Para compilar o Servidor (Server)...
 
 ```sh
-$ gcc server.c -o server -Wall -lcrypto
+$ gcc server.c -o server -lcrypto
 $ ./server
 ```
 
 Para compilar o Cliente (Client)...
 
 ```sh
-$ gcc client.c -o client -Wall -lcrypto
+$ gcc client.c -o client -lcrypto
 $ ./client 127.0.0.1
 ```
