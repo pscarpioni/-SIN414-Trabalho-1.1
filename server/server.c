@@ -138,7 +138,7 @@ int ehPrimo(unsigned long numero) {
     		return 0;
     	}
     
-    	p += 4;
+    	primo += 4;
   	}
 
   	return 1;
@@ -164,7 +164,7 @@ unsigned long randomPrimo(int menor, int maior) {
 keys* principalRSA() {
 	int p,q,s;
 	FILE *escreve_chaves;
-	char nome_arquivo[] = "chaves.txt"
+	char nome_arquivo[] = "chaves.txt";
 	keys *retorna_chave = (keys*)malloc(sizeof(keys));
 	
 
@@ -201,3 +201,228 @@ keys* principalRSA() {
 
 	return retorna_chave;
 }
+
+
+
+
+/* Inicia o Servidor */
+int iniciaServidor ()
+{
+   int init_server;
+   struct sockaddr_in endereco_server;   /* endereço do servidor */
+   int status;
+
+
+   /* Requisição (RESQUEST)  de um socket descriptor */
+   init_server = socket(AF_INET, SOCK_STREAM, 0);
+   if (init_server == -1) {
+      fprintf(stderr, "*** ERRO no Servidor!!! Impossível obter um socket descriptor\n");
+      exit(1);
+   }
+
+   /* Define os atributos da estrutura de endereços de Internet do Servidor */
+   endereco_server.sin_family = AF_INET;            /* Valor padrão para a maioria das aplicações */
+   endereco_server.sin_port = htons(PORTA_SERVICO);  
+   endereco_server.sin_addr.s_addr = INADDR_ANY;    
+   bzero(&(endereco_server.sin_zero),8);
+
+   /* Liga o socket na porta definida para ficar a espera de requisições */
+   status = bind(init_server, (struct sockaddr *)&endereco_server, sizeof(struct sockaddr));
+   if (status == -1) {
+      fprintf(stderr, "*** Erro no servidor: impossível de se iniciar na porta %d\n", PORTA_SERVICO);
+      exit(2);
+   }
+
+   /* Espera por conexões na porta definida */
+   status = listen(init_server,TAM_Q);
+   if (status == -1) {
+      fprintf(stderr, "*** Erro no servidor: Não é possível esperar por conexões\n");
+      exit(3);
+   }
+
+   fprintf(stderr, "+++ Servidor iniciado com sucesso!!! Esperando na porta: %hd\n", PORTA_SERVICO);
+   return init_server;
+}
+
+
+/* Aceita conexões de clientes e gera um processo filho para cada REQUEST */
+void aceitaConexao(int init_server) {
+   int comunicacao_cliente;
+   struct sockaddr_in endereco_cliente;
+   socklen_t tamanho;
+
+
+    while (1) {
+      /* Aceita a conexão de Clientes */
+      comunicacao_cliente = accept(init_server, (struct sockaddr *)&endereco_cliente, &tamanho);
+      if (comunicacao_cliente == -1) {
+         fprintf(stderr, "*** Erro no Servidor: impossível aceitar o REQUEST\n");
+         continue;
+      }
+     
+      /* Separa (realiza um fork) um processo filho para processar os REQUESTs */
+      if (!fork()) {                         //--------------
+         comunicaCliente (comunicacao_cliente);
+         fprintf(stderr, "**** Conexão encerrada com o Cliente!\n");
+         close(comunicacao_cliente);
+         exit(0);
+      }
+
+ 
+      close(comunicacao_cliente);
+
+      while (waitpid(-1,NULL,WNOHANG) > 0);
+   }
+}
+
+
+/* Interação do processo filho com o cliente */
+void comunicaCliente ( int comunicacao_cliente )
+{
+   int status;
+   int num_bytes;
+   int endereco_origem, endereco_destino, printflag=0;
+
+   RESPONSEMsg send_msg;
+   REQUESTMsg recv_msg;
+   PubKey public_key_got;
+
+   endereco_destino = inet_addr("192.168.1.245");
+   endereco_origem = inet_addr("SERVIDOR_PADRAO");
+ 
+   /* Recebe uma resposta do servidor */
+   num_bytes = recv(comunicacao_cliente, &public_key_got, sizeof(PubKey),0);
+   if (num_bytes == -1) {
+      fprintf(stderr, "*** Erro no Servidor: incapaz de receber\n");
+      return;
+   }
+   
+
+   switch ( public_key_got.hdr.opcode ) {
+    
+   case PUBKEY : /* Mensagem de REQUEST */
+              printf("Mensagem:: com a chave pública(PUBKEY) recebida da origem: (%d)\n", recv_msg.hdr.endereco_origem);  
+              send_msg.hdr.opcode = RESPONSE;
+              send_msg.hdr.endereco_origem = endereco_origem;        
+              send_msg.hdr.endereco_destino = endereco_destino;  
+              send_msg.desconecta_flag = 0;
+              printf("Os valores recebidos para a chave pública (PUBKEY) são: \n");
+              printf("e = %li\n", public_key_got.e);
+              printf("n = %li\n", public_key_got.n);
+              
+              printf("Enviando a resposta para a solicitação do Cliente . . . \n"); 
+              status = send(comunicacao_cliente, &send_msg, sizeof(RESPONSEMsg), 0);
+               if (status == -1) {
+                fprintf(stderr, "*** Erro no Cliente: não foi possível fazer o envio!\n");
+                return;
+                }
+              break;
+    default: 
+           printf("Código da mensagem recebida: %d\n", recv_msg.hdr.opcode);
+           exit(0);  
+   }
+
+
+   while(1){
+
+    num_bytes = recv(comunicacao_cliente, &recv_msg, sizeof(REQUESTMsg),0);
+   if (num_bytes == -1) {
+      fprintf(stderr, "*** Erro no Servidor: não foi possível receber a mensagem de solicitação\n");
+      return;
+   }
+
+   if (recv_msg.desconecta_flag==0){	//recebe o nome do arquivo solicitado
+              struct stat st;
+
+              if(stat(recv_msg.nome_arquivo, &st)==0) {
+              	send_msg.hdr.opcode = RESPONSE;
+              	printf("O arquivo existe...\n Texto Normal:\t\tTexto Cifrado:\tHash Enviado:\n");
+              	char ch;
+              
+              	FILE *fp;
+              	fp = fopen (recv_msg.nome_arquivo,"r");
+
+                while(ch!=EOF){
+                  ch = fgetc(fp);
+                  printf("%c\t\t",ch);
+                  if(ch>=65 && ch<=90)
+                      ch -= 64;
+                  else if(ch==32)	//espaço
+                    ch=0;
+                  else if(ch>=97 && ch<=122)	//de 'a' até 'z'
+                      ch -= 71;
+                  else if(ch>=48 && ch<=57)
+                      ch += 4;
+                  else if(ch==44)	// vírgula(,)
+                      ch = 61;
+                  else if(ch==46)	//ponto final (.)
+                      ch = 62;
+                  else if(ch==33)	//exclamação(!)
+                      ch = 63;
+
+                  e = public_key_got.e;
+                  M = ch;
+                  n = public_key_got.n;
+
+                  rsa_encripta();
+                  
+                    char texto[2];
+                    texto[0] = ch;
+                    texto[1] = '\0';
+                    size_t length = sizeof(texto);
+                    SHA1((const unsigned char*)texto, length, send_msg.hash);
+
+                    printf("%li\t\t%li\n",C,(long int)send_msg.hash);
+
+                    send_msg.ciphertext = C;
+                    send_msg.REQUESTcom = 0;
+                    status = send(comunicacao_cliente, &send_msg, sizeof(RESPONSEMsg), 0);
+                     if (status == -1) {
+                      fprintf(stderr, "*** Erro no Servidor: impossível de enviar\n");
+                      return;
+                      }
+                  }
+                  send_msg.REQUESTcom = 1;
+              }
+
+              if (stat(recv_msg.nome_arquivo, &st)!=0 || send_msg.REQUESTcom ==1){
+
+                    if(stat(recv_msg.nome_arquivo, &st)!=0 && printflag==0){
+                      printf("O arquivo não existe! Enviando mensagem para desconexão do Cliente!\n");
+                      send_msg.REQUESTcom = 2;
+                      printflag=1;
+                    }
+                    else
+                      send_msg.REQUESTcom = 1;
+                    status = send(comunicacao_cliente, &send_msg, sizeof(RESPONSEMsg), 0);
+                     if (status == -1) {
+                      fprintf(stderr, "*** Erro no Servidor: Envio impossível\n");
+                      return;
+                      }
+              }
+        }
+
+      else if(recv_msg.desconecta_flag==1){
+        printf("Solicitação de desconexão recebida pelo Cliente!\n");
+          send_msg.desconecta_flag=1;
+          printf("Enviando permissão de desconexão com o Cliente!\n");
+          status = send(comunicacao_cliente, &send_msg, sizeof(RESPONSEMsg), 0);
+           if (status == -1) {
+            fprintf(stderr, "*** Erro no Cliente: Envio impossível\n");
+            return;
+            }
+            break;
+      }
+
+   }
+}
+
+
+int main () {
+   int init_server;
+   init_server = iniciaServidor();   
+   aceitaConexao(init_server);
+   return 0;
+}
+  
+
